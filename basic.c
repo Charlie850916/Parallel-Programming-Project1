@@ -43,62 +43,77 @@ int main(int argc, char* argv[])
 	if(size>n)
 		size = n;
 
-	for(int times = 0 ; times < n ; ++times)
+	int sorted = 0;
+	while(!sorted)
     	{
-		MPI_Barrier(MPI_COMM_WORLD);
-		if(rank<size)
+		sorted = 1;
+		for(int odd_even = 0 ; odd_even < 2 ; ++odd_even)
 		{
-        		float dataInL, dataInR, dataOutL = data[0], dataOutR = data[dataSize-1];
-
-			MPI_Request req1, req2, req3, req4;
-
-        		if(rank > 0)
-            			MPI_Isend(&dataOutL, 1, MPI_FLOAT, rank-1, 0, MPI_COMM_WORLD, &req1);
-
-			if(rank < size-1)
-				MPI_Isend(&dataOutR, 1, MPI_FLOAT, rank+1, 0, MPI_COMM_WORLD, &req2);
-
-			if(rank > 0)
-				MPI_Irecv(&dataInL, 1, MPI_FLOAT, rank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &req3);
-
-       			if(rank < size-1)
-            			MPI_Irecv(&dataInR, 1, MPI_FLOAT, rank+1, MPI_ANY_TAG, MPI_COMM_WORLD, &req4);
-
-			for(int i = 0 ; i<dataSize ; ++i)
+			MPI_Barrier(MPI_COMM_WORLD);
+			if(rank<size)
 			{
-				int id = base+i;
-				if(id%2 == times%2)
-					if(i+1 < dataSize)
-						if(data[i] > data[i+1])
+        			float dataInL, dataInR, dataOutL = data[0], dataOutR = data[dataSize-1];
+
+				MPI_Request req1, req2, req3, req4;
+
+        			if(rank > 0)
+            				MPI_Isend(&dataOutL, 1, MPI_FLOAT, rank-1, 0, MPI_COMM_WORLD, &req1);
+
+				if(rank < size-1)
+					MPI_Isend(&dataOutR, 1, MPI_FLOAT, rank+1, 0, MPI_COMM_WORLD, &req2);
+	
+				if(rank > 0)
+					MPI_Irecv(&dataInL, 1, MPI_FLOAT, rank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &req3);
+	
+       				if(rank < size-1)
+            				MPI_Irecv(&dataInR, 1, MPI_FLOAT, rank+1, MPI_ANY_TAG, MPI_COMM_WORLD, &req4);
+
+				for(int i = 0 ; i<dataSize ; ++i)
+				{
+					int id = base+i;
+					if(id%2 == odd_even)
+						if(i+1 < dataSize)
+							if(data[i] > data[i+1])
+							{
+								sorted = 0;
+								float tmp = data[i];
+								data[i] = data[i+1];
+								data[i+1] = tmp;
+							}
+				}
+
+        			if(rank > 0)
+            			{
+					MPI_Wait(&req1, &status);
+					MPI_Wait(&req3, &status);
+				}	
+
+        			if(rank < size-1)
+            			{
+					MPI_Wait(&req2, &status);
+					MPI_Wait(&req4, &status);
+				}
+
+				if(base%2 != odd_even)
+					if(rank > 0)
+						if(data[0] < dataInL)
 						{
-							float tmp = data[i];
-							data[i] = data[i+1];
-							data[i+1] = tmp;
+							sorted = 0;
+							data[0] = dataInL;
+						}
+	
+				if((base+dataSize-1)%2 == odd_even)
+					if(rank < size-1)
+						if(data[dataSize-1] > dataInR)
+						{
+							sorted = 0;
+							data[dataSize-1] = dataInR;
 						}
 			}
-
-        		if(rank > 0)
-            		{
-				MPI_Wait(&req1, &status);
-				MPI_Wait(&req3, &status);
-			}
-
-        		if(rank < size-1)
-            		{
-				MPI_Wait(&req2, &status);
-				MPI_Wait(&req4, &status);
-			}
-
-			if(base%2 != times%2)
-				if(rank > 0)
-					if(data[0] < dataInL)
-						data[0] = dataInL;
-
-			if((base+dataSize-1)%2 == times%2)
-				if(rank < size-1)
-					if(data[dataSize-1] > dataInR)
-						data[dataSize-1] = dataInR;
 		}
+		int send = sorted;
+		MPI_Allreduce(&send, &sorted, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+		MPI_Barrier(MPI_COMM_WORLD);
     	}
 
 	// data output

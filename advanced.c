@@ -2,6 +2,13 @@
 #include <stdlib.h>
 #include "mpi.h"
 
+int cmp(const void *a, const void *b)
+{
+	if(*(float*)a < *(float*)b)
+		return -1;
+	return *(float*)a > *(float*)b;
+}
+
 int main(int argc, char* argv[])
 {
 	MPI_Init(&argc, &argv);
@@ -15,8 +22,7 @@ int main(int argc, char* argv[])
 	MPI_Status status;
 
 	// data input
-
-	int dataSize = n/size;
+	int dataSize = n/size, leftSize = n/size, rightSize = n/size;
 	int tmp = n - dataSize*size;
 	int base = dataSize*rank;
 
@@ -24,12 +30,23 @@ int main(int argc, char* argv[])
 	{
 		if(i==rank)
 			dataSize++;
+
+		if(rank>0 && i==rank-1)
+			leftSize++;
+
+		if(rank<size-1 && i==rank+1)
+			rightSize++;
+
 		if(i<rank)
 			base++;
 		tmp--;
 	}
 
+	MPI_Barrier(MPI_COMM_WORLD);
+
 	float *data = (float*) malloc(dataSize*sizeof(float));
+	float *left = (float*) malloc(leftSize*sizeof(float));
+	float *right = (float*) malloc(rightSize*sizeof(float));
 
 	MPI_File fin;
 	MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_RDONLY, MPI_INFO_NULL, &fin);
@@ -37,73 +54,95 @@ int main(int argc, char* argv[])
 	MPI_File_read_all(fin, data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fin);
 
-	// odd even transposition sort
-	MPI_Barrier(MPI_COMM_WORLD);
-
 	if(size>n)
 		size = n;
 
-	for(int times = 0 ; times < n ; ++times)
+	if(rank<size)
+		qsort(data, dataSize, sizeof(float), cmp);
+
+	// odd even sort by rank
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	MPI_Request req1, req2;
+	int sorted = 0;
+	while(!sorted)
     	{
-		MPI_Barrier(MPI_COMM_WORLD);
-		if(rank<size)
+		sorted = 1;
+		for(int odd_even = 0 ; odd_even < 2 ; ++odd_even)
 		{
-        		float dataInL, dataInR, dataOutL = data[0], dataOutR = data[dataSize-1];
-
-			MPI_Request req1, req2, req3, req4;
-
-        		if(rank > 0)
-            			MPI_Isend(&dataOutL, 1, MPI_FLOAT, rank-1, 0, MPI_COMM_WORLD, &req1);
-
-			if(rank < size-1)
-				MPI_Isend(&dataOutR, 1, MPI_FLOAT, rank+1, 0, MPI_COMM_WORLD, &req2);
-
-			if(rank > 0)
-				MPI_Irecv(&dataInL, 1, MPI_FLOAT, rank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &req3);
-
-       			if(rank < size-1)
-            			MPI_Irecv(&dataInR, 1, MPI_FLOAT, rank+1, MPI_ANY_TAG, MPI_COMM_WORLD, &req4);
-
-			for(int i = 0 ; i<dataSize ; ++i)
+			if(rank<size)
 			{
-				int id = base+i;
-				if(id%2 == times%2)
-					if(i+1 < dataSize)
-						if(data[i] > data[i+1])
+        			if(rank%2==odd_even)
+				{
+					if(rank<size-1)
+					{	
+						MPI_Isend(data, dataSize, MPI_FLOAT, rank+1, 0, MPI_COMM_WORLD, &req1);
+						MPI_Irecv(right, rightSize, MPI_FLOAT, rank+1, MPI_ANY_TAG, MPI_COMM_WORLD, &req2);
+						MPI_Wait(&req1, &status);
+						MPI_Wait(&req2, &status);
+
+						if(right[0] < data[dataSize-1])
 						{
-							float tmp = data[i];
-							data[i] = data[i+1];
-							data[i+1] = tmp;
+							float *a = (float*)malloc(dataSize*sizeof(float)), *tmp;
+							sorted = 0;
+							int cnt = 0, rid = 0, id = 0;
+							while(cnt < dataSize) // merge
+							{
+								if(rid >= rightSize)
+									a[cnt++] = data[id++];
+								else if(id >= dataSize)
+									a[cnt++] = right[rid++];
+								else if(data[id] < right[rid])
+									a[cnt++] = data[id++];
+								else
+									a[cnt++] = right[rid++];
+
+							}
+							tmp = data;
+							data = a;
+							free(tmp);
 						}
+					}
+				}
+				else
+				{
+					if(rank > 0)
+					{
+						MPI_Isend(data, dataSize, MPI_FLOAT, rank-1, 0, MPI_COMM_WORLD, &req1);
+						MPI_Irecv(left, leftSize, MPI_FLOAT, rank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &req2);
+						MPI_Wait(&req1, &status);
+						MPI_Wait(&req2, &status);
+
+						if(data[0] < left[leftSize-1])
+						{
+							float *a = (float*)malloc(dataSize*sizeof(float)), *tmp;
+							sorted = 0;
+							int cnt = dataSize-1, lid = leftSize-1, id = dataSize-1;
+						        while(cnt >= 0) // merge
+							{
+								if(lid < 0)
+									a[cnt--] = data[id--];
+								else if(id < 0)
+									a[cnt--] = left[lid--];
+								else if(left[lid] < data[id])
+									a[cnt--] = data[id--];
+								else
+									a[cnt--] = left[lid--];
+							}
+							tmp = data;
+							data = a;
+							free(tmp);
+						}
+					}
+				}
+
 			}
-
-        		if(rank > 0)
-            		{
-				MPI_Wait(&req1, &status);
-				MPI_Wait(&req3, &status);
-			}
-
-        		if(rank < size-1)
-            		{
-				MPI_Wait(&req2, &status);
-				MPI_Wait(&req4, &status);
-			}
-
-			if(base%2 != times%2)
-				if(rank > 0)
-					if(data[0] < dataInL)
-						data[0] = dataInL;
-
-			if((base+dataSize-1)%2 == times%2)
-				if(rank < size-1)
-					if(data[dataSize-1] > dataInR)
-						data[dataSize-1] = dataInR;
 		}
+		int send = sorted;
+		MPI_Allreduce(&send, &sorted, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
     	}
 
 	// data output
-	MPI_Barrier(MPI_COMM_WORLD);
-
 	MPI_File fout;
 	MPI_File_open(MPI_COMM_WORLD, argv[3], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fout);
 	MPI_File_seek(fout, base*sizeof(float), MPI_SEEK_SET);
@@ -111,6 +150,8 @@ int main(int argc, char* argv[])
 	MPI_File_close(&fout);
 
 	free(data);
+	free(left);
+	free(right);
 	MPI_Finalize();
 	return 0;
 }
