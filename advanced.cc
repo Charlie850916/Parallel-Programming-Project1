@@ -1,16 +1,14 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <iostream>
+#include <algorithm>
 #include "mpi.h"
 
-int cmp(const void *a, const void *b)
-{
-	if(*(float*)a < *(float*)b)
-		return -1;
-	return *(float*)a > *(float*)b;
-}
+using namespace std;
 
 int main(int argc, char* argv[])
 {
+	ios::sync_with_stdio(false);
+	cin.tie(0);
+
 	MPI_Init(&argc, &argv);
 
 	int n = atoi(argv[1]);
@@ -26,29 +24,20 @@ int main(int argc, char* argv[])
 	int tmp = n - dataSize*size;
 	int base = dataSize*rank;
 
-	for(int i=0 ; i<size && tmp>0 ; ++i)
-	{
-		if(i==rank)
-			dataSize++;
+	if(tmp>rank)
+		dataSize++;
+	if(rank>0 && tmp>rank-1)
+		leftSize++;
+	if(rank<size-1 && tmp>rank+1)
+		rightSize++;
 
-		if(rank>0 && i==rank-1)
-			leftSize++;
+	base += min(tmp, rank);
 
-		if(rank<size-1 && i==rank+1)
-			rightSize++;
+	float *data = new float[dataSize];
+	float *left = new float[leftSize];
+	float *right = new float[rightSize];
 
-		if(i<rank)
-			base++;
-		tmp--;
-	}
-
-	MPI_Barrier(MPI_COMM_WORLD);
-
-	float *data = (float*) malloc(dataSize*sizeof(float));
-	float *left = (float*) malloc(leftSize*sizeof(float));
-	float *right = (float*) malloc(rightSize*sizeof(float));
-
-	MPI_File fin;
+	MPI_File fin, fout;
 	MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_RDONLY, MPI_INFO_NULL, &fin);
 	MPI_File_seek(fin, base*sizeof(float), MPI_SEEK_SET);
 	MPI_File_read_all(fin, data, dataSize, MPI_FLOAT, &status);
@@ -57,14 +46,12 @@ int main(int argc, char* argv[])
 	if(size>n)
 		size = n;
 
-	if(rank<size)
-		qsort(data, dataSize, sizeof(float), cmp);
+	sort(data, data+dataSize);
 
 	// odd even sort by rank
-	MPI_Barrier(MPI_COMM_WORLD);
-
 	MPI_Request req1, req2;
-	int sorted = 0;
+
+	char sorted = 0;
 	while(!sorted)
     	{
 		sorted = 1;
@@ -78,12 +65,11 @@ int main(int argc, char* argv[])
 					{	
 						MPI_Isend(data, dataSize, MPI_FLOAT, rank+1, 0, MPI_COMM_WORLD, &req1);
 						MPI_Irecv(right, rightSize, MPI_FLOAT, rank+1, MPI_ANY_TAG, MPI_COMM_WORLD, &req2);
-						MPI_Wait(&req1, &status);
 						MPI_Wait(&req2, &status);
 
 						if(right[0] < data[dataSize-1])
 						{
-							float *a = (float*)malloc(dataSize*sizeof(float)), *tmp;
+							float *a = new float[dataSize], *ttmp;
 							sorted = 0;
 							int cnt = 0, rid = 0, id = 0;
 							while(cnt < dataSize) // merge
@@ -98,9 +84,10 @@ int main(int argc, char* argv[])
 									a[cnt++] = right[rid++];
 
 							}
-							tmp = data;
+							MPI_Wait(&req1, &status);
+							ttmp = data;
 							data = a;
-							free(tmp);
+							delete ttmp;
 						}
 					}
 				}
@@ -110,12 +97,11 @@ int main(int argc, char* argv[])
 					{
 						MPI_Isend(data, dataSize, MPI_FLOAT, rank-1, 0, MPI_COMM_WORLD, &req1);
 						MPI_Irecv(left, leftSize, MPI_FLOAT, rank-1, MPI_ANY_TAG, MPI_COMM_WORLD, &req2);
-						MPI_Wait(&req1, &status);
 						MPI_Wait(&req2, &status);
 
 						if(data[0] < left[leftSize-1])
 						{
-							float *a = (float*)malloc(dataSize*sizeof(float)), *tmp;
+							float *a = new float[dataSize], *ttmp;
 							sorted = 0;
 							int cnt = dataSize-1, lid = leftSize-1, id = dataSize-1;
 						        while(cnt >= 0) // merge
@@ -129,29 +115,29 @@ int main(int argc, char* argv[])
 								else
 									a[cnt--] = left[lid--];
 							}
-							tmp = data;
+							MPI_Wait(&req1, &status);
+							ttmp = data;
 							data = a;
-							free(tmp);
+							delete ttmp;
 						}
 					}
 				}
-
 			}
 		}
-		int send = sorted;
-		MPI_Allreduce(&send, &sorted, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+		char send = sorted;
+		MPI_Allreduce(&send, &sorted, 1, MPI_CHAR, MPI_LAND, MPI_COMM_WORLD);
     	}
 
 	// data output
-	MPI_File fout;
 	MPI_File_open(MPI_COMM_WORLD, argv[3], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fout);
 	MPI_File_seek(fout, base*sizeof(float), MPI_SEEK_SET);
-	MPI_File_write(fout, data, dataSize, MPI_FLOAT, &status);
+	MPI_File_write_all(fout, data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fout);
 
-	free(data);
-	free(left);
-	free(right);
+	// finish
+	delete data;
+	delete left;
+	delete right;
 	MPI_Finalize();
 	return 0;
 }
