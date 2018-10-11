@@ -36,11 +36,14 @@ int main(int argc, char* argv[])
 	float *data = new float[dataSize];
 	float *left = new float[leftSize];
 	float *right = new float[rightSize];
+	float *a = new float[dataSize];
+	float *ttmp;
+
+	int offset = base*sizeof(float);
 
 	MPI_File fin, fout;
 	MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_RDONLY, MPI_INFO_NULL, &fin);
-	MPI_File_seek(fin, base*sizeof(float), MPI_SEEK_SET);
-	MPI_File_read_all(fin, data, dataSize, MPI_FLOAT, &status);
+	MPI_File_read_at_all(fin, offset, data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fin);
 
 	if(size>n)
@@ -51,11 +54,13 @@ int main(int argc, char* argv[])
 	// odd even sort by rank
 	MPI_Request req1, req2;
 
-	char sorted = 0;
+	int cnt, id, lid, rid;
+	char sorted = 0, send, odd_even;
+
 	while(!sorted)
     	{
 		sorted = 1;
-		for(int odd_even = 0 ; odd_even < 2 ; ++odd_even)
+		for(odd_even = 0 ; odd_even < 2 ; ++odd_even)
 		{
 			if(rank<size)
 			{
@@ -69,9 +74,7 @@ int main(int argc, char* argv[])
 
 						if(right[0] < data[dataSize-1])
 						{
-							float *a = new float[dataSize], *ttmp;
-							sorted = 0;
-							int cnt = 0, rid = 0, id = 0;
+							sorted = cnt = id = rid = 0;
 							while(cnt < dataSize) // merge
 							{
 								if(rid >= rightSize)
@@ -84,10 +87,10 @@ int main(int argc, char* argv[])
 									a[cnt++] = right[rid++];
 
 							}
-							MPI_Wait(&req1, &status);
 							ttmp = data;
+							MPI_Wait(&req1, &status);
 							data = a;
-							delete ttmp;
+							a = ttmp;
 						}
 					}
 				}
@@ -101,9 +104,9 @@ int main(int argc, char* argv[])
 
 						if(data[0] < left[leftSize-1])
 						{
-							float *a = new float[dataSize], *ttmp;
 							sorted = 0;
-							int cnt = dataSize-1, lid = leftSize-1, id = dataSize-1;
+							id = cnt = dataSize-1;
+							lid = leftSize-1;
 						        while(cnt >= 0) // merge
 							{
 								if(lid < 0)
@@ -115,29 +118,25 @@ int main(int argc, char* argv[])
 								else
 									a[cnt--] = left[lid--];
 							}
-							MPI_Wait(&req1, &status);
 							ttmp = data;
+							MPI_Wait(&req1, &status);
 							data = a;
-							delete ttmp;
+							a = ttmp;
 						}
 					}
 				}
 			}
 		}
-		char send = sorted;
+		send = sorted;
 		MPI_Allreduce(&send, &sorted, 1, MPI_CHAR, MPI_LAND, MPI_COMM_WORLD);
     	}
 
 	// data output
 	MPI_File_open(MPI_COMM_WORLD, argv[3], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fout);
-	MPI_File_seek(fout, base*sizeof(float), MPI_SEEK_SET);
-	MPI_File_write_all(fout, data, dataSize, MPI_FLOAT, &status);
+	MPI_File_write_at_all(fout, offset, data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fout);
 
 	// finish
-	delete data;
-	delete left;
-	delete right;
 	MPI_Finalize();
 	return 0;
 }
