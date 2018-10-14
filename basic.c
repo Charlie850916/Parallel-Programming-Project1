@@ -33,13 +33,10 @@ int main(int argc, char* argv[])
 
 	MPI_File fin;
 	MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_RDONLY, MPI_INFO_NULL, &fin);
-	MPI_File_seek(fin, base*sizeof(float), MPI_SEEK_SET);
-	MPI_File_read_all(fin, data, dataSize, MPI_FLOAT, &status);
+	MPI_File_read_at_all(fin, base*sizeof(float), data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fin);
 
 	// odd even transposition sort
-	MPI_Barrier(MPI_COMM_WORLD);
-
 	if(size>n)
 		size = n;
 
@@ -113,16 +110,11 @@ int main(int argc, char* argv[])
 		}
 		int send = sorted;
 		MPI_Allreduce(&send, &sorted, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
-		MPI_Barrier(MPI_COMM_WORLD);
     	}
-
-	// data output
-	MPI_Barrier(MPI_COMM_WORLD);
 
 	MPI_File fout;
 	MPI_File_open(MPI_COMM_WORLD, argv[3], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fout);
-	MPI_File_seek(fout, base*sizeof(float), MPI_SEEK_SET);
-	MPI_File_write(fout, data, dataSize, MPI_FLOAT, &status);
+	MPI_File_write_at_all(fout, base*sizeof(float), data, dataSize, MPI_FLOAT, &status);
 	MPI_File_close(&fout);
 
 	free(data);
