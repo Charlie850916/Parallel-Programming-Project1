@@ -1,5 +1,6 @@
 #include <bits/stdc++.h>
 #include "mpi.h"
+#include "pdqsort.h"
 
 using namespace std;
 
@@ -42,7 +43,7 @@ int main(int argc, char* argv[])
 	if(size>n)
 		size = n;
 
-	sort(data, data+dataSize);
+	pdqsort(data, data+dataSize);
 
 	MPI_Request req1, req2, req3, req4;
 
